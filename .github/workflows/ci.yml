@@ -1,0 +1,75 @@
+name: Full-stack verification
+on:
+  push:
+    branches: ['main', 'feat/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate private local settings and start infrastructure
+        run: |
+          python3 scripts/init-dev.py
+          python3 scripts/enable-local-judge.py
+          docker compose up -d postgres keycloak rabbitmq redis
+          python3 scripts/wait.py http://localhost:8081/realms/placeprep/.well-known/openid-configuration
+          docker compose exec -T postgres createdb -U placeprep placeprep_test
+      - name: Backend migrations, integration tests, and build
+        run: python3 scripts/with-env.py mvn -B -f backend/pom.xml verify
+      - name: Frontend build and dependency audit
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+          npm audit --prefix frontend --omit=dev --audit-level=low
+      - name: AI adapter tests
+        run: |
+          python3 -m venv .tools/ai-venv
+          .tools/ai-venv/bin/pip install -r ai-service/requirements.lock
+          .tools/ai-venv/bin/python -m unittest discover -s ai-service -v
+      - name: Prepare isolated language runtimes
+        run: |
+          docker pull eclipse-temurin:21.0.8_9-jdk
+          docker pull python:3.12.12-slim
+          docker pull gcc:14.3.0
+          docker pull node:24.11.0-bookworm-slim
+      - name: Start application and provision disposable test accounts
+        run: |
+          python3 scripts/dev-account.py
+          nohup python3 scripts/dev.py > /tmp/placeprep-runtime.log 2>&1 &
+          python3 scripts/wait.py http://localhost:8080/actuator/health
+          python3 scripts/wait.py http://localhost:2358/health
+          python3 scripts/wait.py http://localhost:3000/dashboard
+      - name: Real isolated execution tests
+        run: python3 -m unittest discover -s judge-service -v
+      - name: Browser workflows
+        working-directory: frontend
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results
+          path: |
+            backend/target/surefire-reports/
+            frontend/test-results/
+          retention-days: 7
