@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+target/
+__pycache__/
+.pytest_cache/
+.venv/
+*.log
+playwright-report/
+test-results/
+infra/generated/
+frontend/public/monaco/
+frontend/tsconfig.tsbuildinfo
+.tools/

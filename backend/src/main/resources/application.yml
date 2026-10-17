@@ -1,0 +1,46 @@
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/placeprep}
+    username: ${DB_USER:placeprep}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 15
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER:http://localhost:8081/realms/placeprep}
+          jwk-set-uri: ${OIDC_JWKS:http://localhost:8081/realms/placeprep/protocol/openid-connect/certs}
+  rabbitmq:
+    publisher-confirm-type: simple
+    host: ${RABBIT_HOST:localhost}
+    username: ${RABBIT_USER:placeprep}
+    password: ${RABBIT_PASSWORD}
+    listener:
+      simple:
+        auto-startup: ${JUDGE_ENABLED:false}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+placeprep:
+  judge-enabled: ${JUDGE_ENABLED:false}
+  judge-url: ${JUDGE_URL:}
+  judge-key: ${JUDGE_API_KEY:}
+  language-java: ${JUDGE_JAVA_ID:0}
+  language-python: ${JUDGE_PYTHON_ID:0}
+  language-cpp: ${JUDGE_CPP_ID:0}
+  language-javascript: ${JUDGE_JAVASCRIPT_ID:0}
+  ai-url: ${AI_URL:http://localhost:8000}

@@ -1,0 +1,88 @@
+name: placeprep
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: placeprep
+      POSTGRES_USER: ${DB_USER:?Run python3 scripts/init-dev.py}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Run python3 scripts/init-dev.py}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d placeprep"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  keycloak-init:
+    image: quay.io/keycloak/keycloak:26.4.1
+    user: "0"
+    entrypoint: ["/bin/bash", "-c", "chown -R 1000:0 /opt/keycloak/data/h2"]
+    volumes: ["keycloak-data:/opt/keycloak/data/h2"]
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.1
+    depends_on:
+      keycloak-init: {condition: service_completed_successfully}
+    command: ["start-dev", "--import-realm", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN:?Run init-dev.py}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_PASSWORD:?Run init-dev.py}
+      KC_HOSTNAME: http://localhost:8081
+    ports: ["127.0.0.1:8081:8081"]
+    volumes:
+      - ./infra/generated/realm.json:/opt/keycloak/data/import/realm.json:ro
+      - keycloak-data:/opt/keycloak/data/h2
+  rabbitmq:
+    image: rabbitmq:4.1.4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:?Run init-dev.py}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:?Run init-dev.py}
+    ports: ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]
+    volumes: ["rabbit-data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7.4.6-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+  ai:
+    build: ./ai-service
+    environment:
+      AI_PROVIDER_KEY: ${AI_PROVIDER_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+    ports: ["127.0.0.1:8000:8000"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+  backend:
+    profiles: ["app"]
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/placeprep
+      OIDC_JWKS: http://keycloak:8081/realms/placeprep/protocol/openid-connect/certs
+      RABBIT_HOST: rabbitmq
+      AI_URL: http://ai:8000
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      keycloak: {condition: service_started}
+      ai: {condition: service_started}
+  frontend:
+    profiles: ["app"]
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_OIDC_URL: ${NEXT_PUBLIC_OIDC_URL:-http://localhost:8081}
+    environment:
+      API_INTERNAL_URL: http://backend:8080
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [backend]
+volumes:
+  postgres-data:
+  keycloak-data:
+  rabbit-data:
+  redis-data:
